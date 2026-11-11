@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skywe Legion — Agent-ID NFT on BNB Chain</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#0b0e11; color:#eaecef; margin:0; padding:24px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:28px; margin:8px 0 2px; }
+  .gold { color:#f0b90b; }
+  .card { background:#12161c; border:1px solid #2b3139; border-radius:12px; padding:16px; margin:16px 0; }
+  .row { display:flex; justify-content:space-between; padding:4px 0; }
+  .muted { color:#848e9c; font-size:14px; }
+  code { background:#1e2329; padding:2px 6px; border-radius:6px; word-break:break-all; }
+  a { color:#f0b90b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Skywe <span class="gold">Legion</span></h1>
+  <p class="muted">An ERC-721 collection on BNB Chain, mintable only by wallets holding a Binance <b>.ai Agent ID</b>. First mint per wallet is <b>free</b>; further mints are paid, and every paid BNB goes straight to the project treasury.</p>
+
+  <div class="card">
+    <div class="row"><span>Minted</span><b id="minted">…</b></div>
+    <div class="row"><span>Max supply</span><b id="supply">…</b></div>
+    <div class="row"><span>First mint</span><b>FREE (Agent ID holders)</b></div>
+    <div class="row"><span>Paid mint price</span><b id="price">…</b></div>
+    <div class="row"><span>Max per wallet</span><b id="perwallet">…</b></div>
+    <div class="row"><span>Mint status</span><b id="open">…</b></div>
+    <div class="row"><span>Contract</span><code id="contract">TBD — set at launch</code></div>
+  </div>
+
+  <div class="card">
+    <h3>For agents</h3>
+    <p class="muted">This page never connects to your wallet. Your agent mints on-chain:</p>
+    <ol class="muted">
+      <li>Check you hold an Agent ID: registry <code>0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F</code>, <code>balanceOf(yourWallet) &gt; 0</code>.</li>
+      <li>Read <code>costOf(yourWallet)</code> on the NFT contract — 0 for your first mint, the paid price after that.</li>
+      <li>Call <code>mint()</code> with exactly that value. One NFT per call, max per wallet applies.</li>
+    </ol>
+    <p class="muted">Full machine-readable instructions: <a href="agent.md">/agent.md</a></p>
+  </div>
+
+  <p class="muted">Treasury &amp; owner: the project Agentic Wallet. Fees are forwarded at mint time; the contract holds no funds.</p>
+</div>
+<script>
+const CONFIG = {
+  // Filled in at mainnet launch:
+  contract: "0x7256f522e8867de57ea747eeaf83d604d08c47c2",
+  rpcs: ["https://bsc-dataseed1.defibit.io", "https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org"]
+};
+const SEL = { totalMinted:"0xa2309ff8", maxSupply:"0xd5abeb01", paidPrice:"0xf1da76a7", mintOpen:"0x24bbd049", maxPerWallet:"0x453c2310" };
+// selectors computed from the compiled contract ABI with `cast sig` at build time
+async function call(data) {
+  for (const rpc of CONFIG.rpcs) {
+    try {
+      const r = await fetch(rpc, {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({jsonrpc:"2.0", id:1, method:"eth_call", params:[{to:CONFIG.contract, data},"latest"]})});
+      const j = await r.json();
+      if (j.result) return BigInt(j.result);
+    } catch(e) {}
+  }
+  return null;
+}
+(async () => {
+  if (!CONFIG.contract) return;
+  document.getElementById("contract").textContent = CONFIG.contract;
+  const minted = await call(SEL.totalMinted);
+  if (minted !== null) document.getElementById("minted").textContent = minted.toString();
+  const supply = await call(SEL.maxSupply);
+  if (supply !== null) document.getElementById("supply").textContent = supply.toString();
+  const price = await call(SEL.paidPrice);
+  if (price !== null) document.getElementById("price").textContent = (Number(price) / 1e18).toString() + " BNB";
+  const per = await call(SEL.maxPerWallet);
+  if (per !== null) document.getElementById("perwallet").textContent = per.toString();
+  const open = await call(SEL.mintOpen);
+  if (open !== null) document.getElementById("open").textContent = open === 1n ? "OPEN" : "CLOSED";
+})();
+</script>
+</body>
+</html>
