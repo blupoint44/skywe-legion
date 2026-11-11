@@ -32,14 +32,23 @@
   </div>
 
   <div class="card">
+    <h3 style="margin-top:0">Mint</h3>
+    <p class="muted" id="walletLine">Connect a Web3 wallet that holds a <b>.ai Agent ID</b> (BNB Chain). Your first mint is free.</p>
+    <button id="connectBtn" style="background:#f0b90b;color:#0b0e11;border:0;border-radius:8px;padding:10px 18px;font-weight:700;cursor:pointer">Connect Wallet</button>
+    <button id="mintBtn" disabled style="background:#2b3139;color:#eaecef;border:0;border-radius:8px;padding:10px 18px;font-weight:700;cursor:pointer;margin-left:8px">Mint</button>
+    <p class="muted" id="mintStatus"></p>
+    <p class="muted">Holding your Agent ID in a Binance Agentic Wallet? That wallet cannot connect to websites — your agent mints directly on-chain, see <b>For agents</b> below.</p>
+  </div>
+
+  <div class="card">
     <h3>For agents</h3>
-    <p class="muted">This page never connects to your wallet. Your agent mints on-chain:</p>
+    <p class="muted">Agents mint on-chain directly:</p>
     <ol class="muted">
       <li>Check you hold an Agent ID: registry <code>0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F</code>, <code>balanceOf(yourWallet) &gt; 0</code>.</li>
       <li>Read <code>costOf(yourWallet)</code> on the NFT contract — 0 for your first mint, the paid price after that.</li>
       <li>Call <code>mint()</code> with exactly that value. One NFT per call, max per wallet applies.</li>
     </ol>
-    <p class="muted">Full machine-readable instructions: <a href="agent.md">/agent.md</a></p>
+    <p class="muted">Full machine-readable instructions: <a href="agent.md">agent.md</a></p>
   </div>
 
   <p class="muted">Treasury &amp; owner: the project Agentic Wallet. Fees are forwarded at mint time; the contract holds no funds.</p>
@@ -77,6 +86,77 @@ async function call(data) {
   const open = await call(SEL.mintOpen);
   if (open !== null) document.getElementById("open").textContent = open === 1n ? "OPEN" : "CLOSED";
 })();
+</script>
+<script>
+const REGISTRY = "0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F";
+const MSEL = { balanceOf: "0x70a08231", costOf: "0x061525f7", mint: "0x1249c58b" };
+let account = null, mintCost = null;
+const $ = id => document.getElementById(id);
+const padAddr = a => a.toLowerCase().replace("0x", "").padStart(64, "0");
+async function pcall(to, data) {
+  const r = await window.ethereum.request({ method: "eth_call", params: [{ to, data }, "latest"] });
+  return BigInt(r);
+}
+async function refreshMintState() {
+  if (!account) return;
+  const bal = await pcall(REGISTRY, MSEL.balanceOf + padAddr(account));
+  if (bal === 0n) {
+    $("mintStatus").textContent = "This wallet does not hold an .ai Agent ID, so it cannot mint.";
+    $("mintBtn").disabled = true;
+    return;
+  }
+  mintCost = await pcall(CONFIG.contract, MSEL.costOf + padAddr(account));
+  $("mintBtn").textContent = mintCost === 0n ? "Mint — FREE" : "Mint — " + (Number(mintCost) / 1e18) + " BNB";
+  $("mintBtn").disabled = false;
+  $("mintStatus").textContent = "Agent ID verified. Ready to mint.";
+}
+$("connectBtn").addEventListener("click", async () => {
+  if (!window.ethereum) {
+    $("mintStatus").textContent = "No Web3 wallet found in this browser. Open this page inside the MetaMask, Trust Wallet, or Binance Web3 wallet browser.";
+    return;
+  }
+  try {
+    const accs = await window.ethereum.request({ method: "eth_requestAccounts" });
+    account = accs[0];
+    const chain = await window.ethereum.request({ method: "eth_chainId" });
+    if (chain !== "0x38") {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x38" }] });
+    }
+    $("walletLine").innerHTML = "Connected: <code>" + account + "</code> (BNB Chain)";
+    $("connectBtn").textContent = "Connected";
+    $("connectBtn").disabled = true;
+    await refreshMintState();
+  } catch (e) {
+    $("mintStatus").textContent = "Connection rejected or failed in the wallet.";
+  }
+});
+$("mintBtn").addEventListener("click", async () => {
+  if (!account || mintCost === null) return;
+  try {
+    $("mintBtn").disabled = true;
+    $("mintStatus").textContent = "Confirm the transaction in your wallet…";
+    const hash = await window.ethereum.request({ method: "eth_sendTransaction",
+      params: [{ from: account, to: CONFIG.contract, value: "0x" + mintCost.toString(16), data: MSEL.mint }] });
+    $("mintStatus").innerHTML = "Transaction sent: <code>" + hash + "</code> — waiting for confirmation…";
+    const wait = async () => {
+      const rc = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [hash] });
+      if (!rc) { setTimeout(wait, 3000); return; }
+      if (rc.status === "0x1") {
+        $("mintStatus").textContent = "Minted! Your Skywe Legion NFT is in your wallet.";
+        const minted = await call(SEL.totalMinted);
+        if (minted !== null) document.getElementById("minted").textContent = minted.toString();
+        await refreshMintState();
+      } else {
+        $("mintStatus").textContent = "Transaction failed on-chain.";
+        $("mintBtn").disabled = false;
+      }
+    };
+    wait();
+  } catch (e) {
+    $("mintStatus").textContent = "Transaction rejected in the wallet.";
+    $("mintBtn").disabled = false;
+  }
+});
 </script>
 </body>
 </html>
