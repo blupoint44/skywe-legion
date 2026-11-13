@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOVA — Nova Token · BSC</title>
+<style>
+  :root{--bg:#070812;--panel:#0e1030;--line:#23265a;--txt:#eef0ff;--muted:#9aa0d0;--gold:#ffd970;--violet:#8b7bff;--ok:#5eeaa0;--err:#ff7b7b}
+  *{box-sizing:border-box} body{margin:0;background:radial-gradient(1000px 600px at 70% -10%,#1b1e4d 0%,var(--bg) 55%);color:var(--txt);font:16px/1.55 system-ui,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 18px 60px}
+  a{color:var(--violet)} .muted{color:var(--muted)} .gold{color:var(--gold)}
+  h1{font-size:52px;margin:8px 0 2px;letter-spacing:2px;background:linear-gradient(90deg,var(--gold),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tag{color:var(--muted);margin:0 0 18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin:14px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat b{display:block;font-size:22px}
+  .stat span{color:var(--muted);font-size:13px}
+  button{background:linear-gradient(90deg,#b98a1c,var(--gold));color:#231a00;border:0;border-radius:10px;padding:13px 20px;font-weight:700;font-size:16px;cursor:pointer;width:100%}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:#1a1d45;color:var(--txt);border:1px solid var(--line)}
+  input[type=number]{width:110px;background:#0a0c26;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:16px}
+  .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .addr{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all}
+  #msg{min-height:22px;margin-top:10px} .ok{color:var(--ok)} .err{color:var(--err)}
+  .star{position:fixed;width:2px;height:2px;background:#fff;border-radius:50%;opacity:.5;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p><a href="index.html">← Skywe Legion</a></p>
+  <h1>NOVA</h1>
+  <p class="tag">A star is born on BNB Chain. Mint NOVA directly from the contract — <b class="gold">1 mint = 1,000,000 NOVA ≈ $1</b>. Proceeds go straight to the treasury. No presale, no VC, hard cap 10 billion.</p>
+
+  <div class="card">
+    <div class="grid">
+      <div class="stat"><b id="price">…</b><span>Price per mint (BNB)</span></div>
+      <div class="stat"><b id="sold">…</b><span>Mints sold</span></div>
+      <div class="stat"><b id="supply">…</b><span>Supply minted / 10B cap</span></div>
+      <div class="stat"><b id="status">…</b><span>Sale status</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="connect" class="ghost">Connect wallet</button>
+      <span id="who" class="muted">Not connected</span>
+    </div>
+    <div id="panel" style="display:none;margin-top:14px">
+      <p class="muted" style="margin:4px 0">Your balance: <b id="bal" class="gold">…</b> · Your mints: <b id="mymints">…</b> / 100</p>
+      <div class="row">
+        <label>Mints <input type="number" id="qty" value="1" min="1" max="100"></label>
+        <span>Total: <b id="total" class="gold">…</b></span>
+      </div>
+      <p><button id="mint">Mint NOVA</button></p>
+    </div>
+    <div id="msg"></div>
+    <p class="muted" style="font-size:13px">Minting requires a Binance <b>.ai Agent ID</b> in your wallet (the contract checks the official registry on-chain). Max 100 mints per wallet. You pay the exact price — the contract rejects any other amount.</p>
+  </div>
+
+  <div class="card">
+    <p style="margin:4px 0"><b>Contract (verified on Sourcify)</b></p>
+    <p class="addr">0x7D0004acfD131De1751D74c1aC237ae51bB32045 <a href="#" id="copy">copy</a></p>
+    <p style="margin:4px 0">
+      <a href="https://bscscan.com/token/0x7D0004acfD131De1751D74c1aC237ae51bB32045" target="_blank" rel="noopener">BscScan</a> ·
+      <a href="https://pancakeswap.finance/swap?outputCurrency=0x7D0004acfD131De1751D74c1aC237ae51bB32045" target="_blank" rel="noopener">PancakeSwap</a>
+      <span class="muted">(DEX liquidity pool opens shortly — mint price is the reference price)</span>
+    </p>
+  </div>
+
+  <p class="muted" style="font-size:13px">NOVA is an experimental community token on BSC. Nothing here is financial advice.</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script>
+const NOVA = "0x7D0004acfD131De1751D74c1aC237ae51bB32045";
+const ABI = [
+  "function price() view returns (uint256)",
+  "function totalMints() view returns (uint256)",
+  "function totalSupply() view returns (uint256)",
+  "function mintOpen() view returns (bool)",
+  "function balanceOf(address) view returns (uint256)",
+  "function mintsByWallet(address) view returns (uint256)",
+  "function mint(uint256 count) payable"
+];
+const RPC = "https://bsc-dataseed.binance.org";
+const fmt = (wei, dec=18) => Number(ethers.formatUnits(wei, dec));
+let priceWei = 0n, signer = null, account = null;
+
+const read = new ethers.Contract(NOVA, ABI, new ethers.JsonRpcProvider(RPC, 56));
+
+async function refresh() {
+  try {
+    const [p, sold, supply, open] = await Promise.all([read.price(), read.totalMints(), read.totalSupply(), read.mintOpen()]);
+    priceWei = p;
+    document.getElementById('price').textContent = fmt(p).toFixed(5) + " BNB";
+    document.getElementById('sold').textContent = sold.toString();
+    document.getElementById('supply').textContent = (fmt(supply)/1e9).toFixed(3) + "B";
+    document.getElementById('status').textContent = open ? "OPEN" : "CLOSED";
+    updTotal();
+    if (account) await refreshMine();
+  } catch (e) { /* RPC hiccup; next manual refresh retries */ }
+}
+function updTotal() {
+  const q = Math.max(1, Math.min(100, Number(document.getElementById('qty').value || 1)));
+  document.getElementById('total').textContent = fmt(priceWei * BigInt(q)).toFixed(5) + " BNB → " + (q*1_000_000).toLocaleString('en-US') + " NOVA";
+}
+async function refreshMine() {
+  const c = new ethers.Contract(NOVA, ABI, signer);
+  const [bal, mine] = await Promise.all([c.balanceOf(account), c.mintsByWallet(account)]);
+  document.getElementById('bal').textContent = fmt(bal).toLocaleString('en-US') + " NOVA";
+  document.getElementById('mymints').textContent = mine.toString();
+  document.getElementById('qty').max = String(Math.max(0, 100 - Number(mine)));
+}
+function msg(t, cls) { const m = document.getElementById('msg'); m.textContent = t; m.className = cls || ""; }
+
+document.getElementById('qty').addEventListener('input', updTotal);
+document.getElementById('copy').addEventListener('click', e => { e.preventDefault(); navigator.clipboard.writeText(NOVA); e.target.textContent = "copied ✓"; });
+
+document.getElementById('connect').addEventListener('click', async () => {
+  if (!window.ethereum) { msg("No wallet found in this browser. Open this page inside your wallet app or install MetaMask.", "err"); return; }
+  try {
+    const prov = new ethers.BrowserProvider(window.ethereum);
+    const net = await prov.getNetwork();
+    if (net.chainId !== 56n) {
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x38' }] });
+    }
+    signer = await prov.getSigner();
+    account = await signer.getAddress();
+    document.getElementById('who').textContent = account.slice(0,6) + "…" + account.slice(-4);
+    document.getElementById('panel').style.display = "block";
+    document.getElementById('connect').textContent = "Connected";
+    await refreshMine();
+    msg("");
+  } catch (e) { msg("Connect failed: " + (e.shortMessage || e.message), "err"); }
+});
+
+document.getElementById('mint').addEventListener('click', async () => {
+  if (!signer) return;
+  const q = Math.max(1, Math.min(100, Number(document.getElementById('qty').value || 1)));
+  const btn = document.getElementById('mint');
+  btn.disabled = true; msg("Sending transaction — confirm in your wallet…");
+  try {
+    const c = new ethers.Contract(NOVA, ABI, signer);
+    const tx = await c.mint(BigInt(q), { value: priceWei * BigInt(q) });
+    msg("Broadcast: " + tx.hash + " — waiting for confirmation…");
+    await tx.wait();
+    msg("Minted " + (q*1_000_000).toLocaleString('en-US') + " NOVA ✓ Tx: " + tx.hash, "ok");
+    await refresh();
+  } catch (e) {
+    msg("Mint failed: " + (e.shortMessage || e.reason || e.message), "err");
+  } finally { btn.disabled = false; }
+});
+
+for (let i = 0; i < 40; i++) {
+  const s = document.createElement('div'); s.className = 'star';
+  s.style.left = Math.random()*100 + 'vw'; s.style.top = Math.random()*100 + 'vh';
+  document.body.appendChild(s);
+}
+refresh();
+</script>
+</body>
+</html>
