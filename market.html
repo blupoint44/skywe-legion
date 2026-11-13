@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skywe Legion — Market</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#0b0e11; color:#eaecef; margin:0; padding:24px; }
+  .wrap { max-width:900px; margin:0 auto; }
+  h1 { font-size:28px; margin:8px 0 2px; }
+  h3 { margin-top:0; }
+  .gold { color:#f0b90b; }
+  .card { background:#12161c; border:1px solid #2b3139; border-radius:12px; padding:16px; margin:16px 0; }
+  .row { display:flex; justify-content:space-between; padding:4px 0; }
+  .muted { color:#848e9c; font-size:14px; }
+  code { background:#1e2329; padding:2px 6px; border-radius:6px; word-break:break-all; }
+  a { color:#f0b90b; }
+  button { background:#f0b90b; color:#0b0e11; border:0; border-radius:8px; padding:9px 16px; font-weight:700; cursor:pointer; }
+  button.secondary { background:#2b3139; color:#eaecef; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  input[type=text] { background:#1e2329; border:1px solid #2b3139; border-radius:8px; color:#eaecef; padding:9px 10px; width:110px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }
+  .item { background:#12161c; border:1px solid #2b3139; border-radius:12px; padding:12px; }
+  .item img { width:100%; border-radius:8px; aspect-ratio:1; object-fit:cover; background:#1e2329; }
+  .item .price { font-size:17px; font-weight:700; margin:8px 0 2px; }
+  .item button { width:100%; margin-top:8px; }
+  .sellrow { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid #1e2329; flex-wrap:wrap; }
+  .sellrow:last-child { border-bottom:0; }
+  .sellrow img { width:52px; height:52px; border-radius:8px; object-fit:cover; background:#1e2329; }
+  .sellrow .spacer { flex:1; }
+  #toasts { position:fixed; right:16px; bottom:16px; max-width:360px; z-index:50; }
+  .toast { background:#1e2329; border:1px solid #2b3139; border-left:4px solid #f0b90b; border-radius:8px; padding:10px 14px; margin-top:8px; font-size:14px; }
+  .toast.ok { border-left-color:#0ecb81; }
+  .toast.err { border-left-color:#f6465d; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Skywe <span class="gold">Legion</span> — Market</h1>
+  <p class="muted">The official escrow market for Skywe Legion NFTs on BNB Chain. Sellers set their own price; the buyer pays the seller <b>100%</b> — no commission. <a href="index.html">← Back to mint page</a></p>
+
+  <div class="card">
+    <div class="row"><span>Market contract</span><code id="mktAddr">…</code></div>
+    <div class="row"><span>Collection</span><code id="colAddr">…</code></div>
+    <div class="row"><span>Listing fee</span><b>0.0003 BNB (≈ $0.20)</b></div>
+    <div class="row"><span>Sale commission</span><b>0% — seller receives 100%</b></div>
+    <div class="row"><span>Delist</span><b>Free, seller only</b></div>
+    <div class="row"><span>Active listings</span><b id="listingCount">…</b></div>
+  </div>
+
+  <div class="card">
+    <h3>Wallet</h3>
+    <p class="muted" id="walletLine">Connect a Web3 wallet on <b>BNB Chain</b> to buy or sell. Browsing listings works without a wallet.</p>
+    <button id="connectBtn">Connect Wallet</button>
+    <p class="muted" id="walletStatus"></p>
+  </div>
+
+  <div class="card">
+    <h3>Listings</h3>
+    <div id="listings"><p class="muted">Loading listings…</p></div>
+  </div>
+
+  <div class="card" id="sellCard" style="display:none">
+    <h3>Sell — your Legion NFTs</h3>
+    <p class="muted">Fee listing 0,0003 BNB (± $0,20) is charged once per listing and goes to the project treasury. Delisting is always free.</p>
+    <div id="myTokens"><p class="muted">Connect your wallet to see your NFTs.</p></div>
+  </div>
+
+  <div class="card" id="myListingsCard" style="display:none">
+    <h3>My listings</h3>
+    <div id="myListings"><p class="muted">None.</p></div>
+  </div>
+
+  <p class="muted">How it works: listing escrows your NFT in the market contract until it sells or you delist. Always verify the market contract address above before approving.</p>
+</div>
+<div id="toasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script>
+const MARKET = "0x89008628651929Fd754EE787cc8F6df8353a3490";
+const COLLECTION = "0x7256f522e8867de57ea747eeaf83d604d08c47c2";
+const META_BASE = "https://blupoint44.github.io/skywe-legion/metadata/";
+const RPCS = ["https://bsc-dataseed1.defibit.io", "https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org"];
+const FEE_FALLBACK = 300000000000000n; // 0.0003 BNB
+
+const MARKET_ABI = [
+  "function ACTION_FEE() view returns (uint256)",
+  "function getListings() view returns (uint256[] tokenIds, address[] sellers, uint256[] prices)",
+  "function list(uint256 tokenId, uint256 price) payable",
+  "function buy(uint256 tokenId) payable",
+  "function delist(uint256 tokenId)"
+];
+const COLLECTION_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
+  "function totalMinted() view returns (uint256)",
+  "function approve(address to, uint256 tokenId)",
+  "function getApproved(uint256 tokenId) view returns (address)",
+  "function isApprovedForAll(address owner, address operator) view returns (bool)"
+];
+
+const $ = id => document.getElementById(id);
+$("mktAddr").textContent = MARKET;
+$("colAddr").textContent = COLLECTION;
+
+function toast(msg, kind) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  $("toasts").appendChild(t);
+  setTimeout(() => t.remove(), kind === "err" ? 12000 : 7000);
+}
+
+// --- read side (public RPC, no wallet needed) ---
+let readProvider = null;
+async function getReadProvider() {
+  if (readProvider) return readProvider;
+  for (const rpc of RPCS) {
+    try {
+      const p = new ethers.JsonRpcProvider(rpc, 56);
+      await p.getBlockNumber();
+      readProvider = p;
+      return p;
+    } catch (e) {}
+  }
+  throw new Error("All BSC RPCs unreachable");
+}
+async function readContracts() {
+  const p = await getReadProvider();
+  return {
+    market: new ethers.Contract(MARKET, MARKET_ABI, p),
+    nft: new ethers.Contract(COLLECTION, COLLECTION_ABI, p)
+  };
+}
+
+const metaCache = {};
+async function getMeta(id) {
+  if (metaCache[id]) return metaCache[id];
+  try {
+    const r = await fetch(META_BASE + id + ".json");
+    if (r.ok) { metaCache[id] = await r.json(); return metaCache[id]; }
+  } catch (e) {}
+  return { name: "Skywe Legion #" + id, image: "" };
+}
+
+let listingsCache = []; // {id, seller, price}
+async function loadListings() {
+  const box = $("listings");
+  try {
+    const { market, nft } = await readContracts();
+    const [ids, sellers, prices] = await market.getListings();
+    // Cross-check escrow: only render listings whose NFT actually sits in the market.
+    const verified = [];
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        const owner = await nft.ownerOf(ids[i]);
+        if (owner.toLowerCase() === MARKET.toLowerCase()) {
+          verified.push({ id: Number(ids[i]), seller: sellers[i], price: prices[i] });
+        }
+      } catch (e) {}
+    }
+    listingsCache = verified;
+    $("listingCount").textContent = verified.length.toString();
+    if (!verified.length) {
+      box.innerHTML = '<p class="muted">No active listings yet. Be the first to list below.</p>';
+    } else {
+      box.innerHTML = "";
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      box.appendChild(grid);
+      for (const l of verified) {
+        const meta = await getMeta(l.id);
+        const d = document.createElement("div");
+        d.className = "item";
+        const isMine = account && l.seller.toLowerCase() === account.toLowerCase();
+        d.innerHTML =
+          (meta.image ? '<img src="' + meta.image + '" alt="">' : "") +
+          "<div><b>" + (meta.name || ("Skywe Legion #" + l.id)) + "</b></div>" +
+          '<div class="price">' + ethers.formatEther(l.price) + " BNB</div>" +
+          '<div class="muted">Seller ' + l.seller.slice(0, 6) + "…" + l.seller.slice(-4) + "</div>";
+        const b = document.createElement("button");
+        b.textContent = isMine ? "Your listing" : "Buy";
+        b.disabled = !account || isMine;
+        if (!isMine) b.addEventListener("click", () => buy(l.id, l.price, b));
+        d.appendChild(b);
+        grid.appendChild(d);
+      }
+    }
+    renderMyListings();
+  } catch (e) {
+    box.innerHTML = '<p class="muted">Could not load listings (RPC unreachable). Refresh to try again.</p>';
+    $("listingCount").textContent = "—";
+  }
+}
+
+// --- wallet side ---
+let account = null, signer = null, walletMarket = null, walletNft = null;
+async function connect() {
+  if (!window.ethereum) {
+    toast("No Web3 wallet found in this browser. Open this page inside the MetaMask, Trust Wallet, or Binance Web3 wallet browser.", "err");
+    return;
+  }
+  try {
+    const bp = new ethers.BrowserProvider(window.ethereum);
+    const net = await bp.getNetwork();
+    if (net.chainId !== 56n) {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x38" }] });
+      } catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{ chainId: "0x38", chainName: "BNB Smart Chain", nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 }, rpcUrls: [RPCS[0]], blockExplorerUrls: ["https://bscscan.com"] }] });
+        } else throw e;
+      }
+    }
+    signer = await bp.getSigner();
+    account = await signer.getAddress();
+    walletMarket = new ethers.Contract(MARKET, MARKET_ABI, signer);
+    walletNft = new ethers.Contract(COLLECTION, COLLECTION_ABI, signer);
+    $("walletLine").innerHTML = "Connected: <code>" + account + "</code> (BNB Chain)";
+    $("connectBtn").textContent = "Connected";
+    $("connectBtn").disabled = true;
+    $("sellCard").style.display = "";
+    $("myListingsCard").style.display = "";
+    toast("Wallet connected.", "ok");
+    await loadListings();
+    await loadMyTokens();
+  } catch (e) {
+    toast("Connection rejected or failed in the wallet.", "err");
+  }
+}
+$("connectBtn").addEventListener("click", connect);
+
+function errText(e) {
+  if (e && (e.code === 4001 || e.code === "ACTION_REJECTED")) return "Transaction rejected in the wallet. Nothing was sent.";
+  if (e && e.shortMessage) return e.shortMessage;
+  if (e && e.message) return e.message.slice(0, 220);
+  return "Transaction failed.";
+}
+
+// Send exactly once; wait for the receipt; report the outcome. Never auto-retries.
+async function sendTx(btn, label, fn, done) {
+  btn.disabled = true;
+  try {
+    toast(label + " — confirm in your wallet…");
+    const tx = await fn();
+    toast(label + " sent: " + tx.hash + " — waiting for confirmation…");
+    const rc = await tx.wait();
+    if (rc.status === 1) {
+      toast(label + " confirmed.", "ok");
+      if (done) await done();
+    } else {
+      toast(label + " failed on-chain.", "err");
+    }
+  } catch (e) {
+    toast(errText(e), "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function buy(id, price, btn) {
+  if (!walletMarket) return;
+  await sendTx(btn, "Buy #" + id, () => walletMarket.buy(id, { value: price }), async () => { await loadListings(); await loadMyTokens(); });
+}
+
+async function loadMyTokens() {
+  const box = $("myTokens");
+  if (!account) return;
+  box.innerHTML = '<p class="muted">Scanning your NFTs…</p>';
+  try {
+    const { nft } = await readContracts();
+    const total = Number(await nft.totalMinted());
+    const mine = [];
+    const CH = 50;
+    for (let start = 1; start <= total; start += CH) {
+      const calls = [];
+      for (let id = start; id < Math.min(start + CH, total + 1); id++) calls.push(nft.ownerOf(id).catch(() => null));
+      const owners = await Promise.all(calls);
+      owners.forEach((o, i) => { if (o && o.toLowerCase() === account.toLowerCase()) mine.push(start + i); });
+    }
+    const listedIds = new Set(listingsCache.filter(l => l.seller.toLowerCase() === account.toLowerCase()).map(l => l.id));
+    const sellable = mine.filter(id => !listedIds.has(id));
+    if (!sellable.length) {
+      box.innerHTML = '<p class="muted">' + (mine.length ? "All your NFTs are already listed." : "This wallet holds no Skywe Legion NFTs.") + "</p>";
+      return;
+    }
+    box.innerHTML = "";
+    const approvedAll = await walletNft.isApprovedForAll(account, MARKET).catch(() => false);
+    for (const id of sellable) {
+      const meta = await getMeta(id);
+      const row = document.createElement("div");
+      row.className = "sellrow";
+      const approved = approvedAll || (await walletNft.getApproved(id).catch(() => ethers.ZeroAddress)).toLowerCase() === MARKET.toLowerCase();
+      row.innerHTML =
+        (meta.image ? '<img src="' + meta.image + '" alt="">' : "") +
+        "<div><b>" + (meta.name || ("Skywe Legion #" + id)) + "</b></div>" +
+        '<div class="spacer"></div>';
+      if (!approved) {
+        const ab = document.createElement("button");
+        ab.className = "secondary";
+        ab.textContent = "Approve";
+        ab.addEventListener("click", () => sendTx(ab, "Approve #" + id, () => walletNft.approve(MARKET, id), loadMyTokens));
+        row.appendChild(ab);
+      }
+      const input = document.createElement("input");
+      input.type = "text"; input.placeholder = "Price (BNB)"; input.inputMode = "decimal";
+      row.appendChild(input);
+      const lb = document.createElement("button");
+      lb.textContent = "List";
+      lb.disabled = !approved;
+      if (!approved) lb.title = "Approve first";
+      lb.addEventListener("click", async () => {
+        let price;
+        try { price = ethers.parseEther(input.value.trim()); if (price <= 0n) throw new Error("bad"); }
+        catch (e) { toast("Enter a valid price in BNB first.", "err"); return; }
+        let fee = FEE_FALLBACK;
+        try { fee = await walletMarket.ACTION_FEE(); } catch (e) {}
+        await sendTx(lb, "List #" + id, () => walletMarket.list(id, price, { value: fee }), async () => { await loadListings(); await loadMyTokens(); });
+      });
+      row.appendChild(lb);
+      const feeNote = document.createElement("span");
+      feeNote.className = "muted";
+      feeNote.textContent = "Fee listing 0,0003 BNB (± $0,20)";
+      row.appendChild(feeNote);
+      box.appendChild(row);
+    }
+  } catch (e) {
+    box.innerHTML = '<p class="muted">Could not scan your NFTs. Refresh to try again.</p>';
+  }
+}
+
+function renderMyListings() {
+  const box = $("myListings");
+  if (!account || !box) return;
+  const mine = listingsCache.filter(l => l.seller.toLowerCase() === account.toLowerCase());
+  if (!mine.length) { box.innerHTML = '<p class="muted">None.</p>'; return; }
+  box.innerHTML = "";
+  for (const l of mine) {
+    const row = document.createElement("div");
+    row.className = "sellrow";
+    row.innerHTML = "<div><b>Skywe Legion #" + l.id + "</b></div>" +
+      '<div class="muted">' + ethers.formatEther(l.price) + " BNB</div>" +
+      '<div class="spacer"></div>';
+    const db = document.createElement("button");
+    db.className = "secondary";
+    db.textContent = "Delist (free)";
+    db.addEventListener("click", () => sendTx(db, "Delist #" + l.id, () => walletMarket.delist(l.id), async () => { await loadListings(); await loadMyTokens(); }));
+    row.appendChild(db);
+    box.appendChild(row);
+  }
+}
+
+loadListings();
+</script>
+</body>
+</html>
